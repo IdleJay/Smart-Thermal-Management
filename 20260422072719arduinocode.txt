@@ -1,0 +1,135 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <DHT.h>
+
+// LCD setup
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// MQ135 pin
+const int mq135Pin = A2;
+#define BUZZ 3
+// Pins
+const int ldrPin = A0;
+const int currentPin = A1;  // Current sensor
+const int irPin = 2;
+const int relayPin = 8;  // Main relay
+const int fanRelay = 9;  // Fan relay
+const int peltiarRelay = 11;
+const int overloadRelay = 10;  // Overload relay
+const int dhtPin = 4;
+
+// DHT setup
+#define DHTTYPE DHT11
+DHT dht(dhtPin, DHTTYPE);
+
+// Thresholds
+int ldrThreshold = 500;
+float tempThreshold = 32.0;
+float currentThreshold = 0.8;  // Overload limit (Amps)
+
+// Calibration (adjust based on sensor)
+float sensitivity = 0.185;  // ACS712-5A = 0.185
+float offsetVoltage = 2.5;
+
+void setup() {
+  pinMode(relayPin, OUTPUT);
+  pinMode(fanRelay, OUTPUT);
+  pinMode(overloadRelay, OUTPUT);
+  pinMode(peltiarRelay, OUTPUT);
+  pinMode(irPin, INPUT);
+  pinMode(BUZZ, OUTPUT);
+  digitalWrite(peltiarRelay, LOW);
+  lcd.init();
+  lcd.backlight();
+
+  Serial.begin(9600);
+  dht.begin();
+
+  lcd.setCursor(0, 0);
+  lcd.print(" SMART THERMAL ");
+  lcd.setCursor(0, 1);
+  lcd.print("MANAGEMENT SYS");
+  delay(2000);
+  lcd.clear();
+}
+
+void loop() {
+  int ldrValue = analogRead(ldrPin);
+  int irState = digitalRead(irPin);
+  float temp = dht.readTemperature();
+  // Read MQ135 sensor value
+  int airValue = analogRead(mq135Pin);
+  digitalWrite(BUZZ, LOW);
+  // ---- CURRENT CALCULATION ----
+  int raw = analogRead(currentPin);
+  float voltage = (raw * 5.0) / 1023.0;
+  float current = (voltage - offsetVoltage) / sensitivity;
+
+  // Serial.print("Current: ");
+  // Serial.println(current);
+
+
+  String UNO = "a" + String(temp) + "b" + String(irState) + "c" + String(ldrValue) + "d" + String(airValue) + "e" + String(current) + "f";
+  Serial.println(UNO);
+  delay(500);
+
+  // ---- OVERLOAD CHECK ----
+  if (current > currentThreshold) {
+    digitalWrite(overloadRelay, HIGH);
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Over Load !!");
+    lcd.setCursor(0, 1);
+    lcd.print("I:");
+    lcd.print(current);
+    digitalWrite(BUZZ, HIGH);
+    delay(1000);
+    return;  // skip other operations
+  }
+
+  // ---- NORMAL DISPLAY ----
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("T:");
+  lcd.print(temp);
+  lcd.print(" L:");
+  lcd.print(ldrValue);
+  lcd.print("   ");
+  lcd.setCursor(0, 1);
+  lcd.print("I:");
+  lcd.print(current);
+  lcd.print("Air:");
+  lcd.print(airValue);
+
+
+  // ---- RELAY 1 (LDR + IR) ----
+  if (irState == LOW) {
+    digitalWrite(relayPin, HIGH);
+    lcd.setCursor(0, 1);
+    lcd.print("Person Entered ");
+
+  } else if (ldrValue > ldrThreshold) {
+    digitalWrite(relayPin, HIGH);
+    lcd.setCursor(0, 1);
+    lcd.print("Night Mode     ");
+  } else {
+    digitalWrite(relayPin, LOW);
+  }
+  // ---- FAN CONTROL ----
+  if (temp > tempThreshold) {
+    lcd.clear();
+    digitalWrite(fanRelay, HIGH);
+    lcd.setCursor(0, 1);
+    lcd.print("High temp...!! ");
+    digitalWrite(BUZZ, HIGH);
+    digitalWrite(peltiarRelay, HIGH);
+  } else {
+    digitalWrite(peltiarRelay, LOW);
+  }
+  if (airValue > 600) {
+    lcd.clear();
+    lcd.print("Air Abnormal  ");
+    digitalWrite(BUZZ, HIGH);
+  }
+}
